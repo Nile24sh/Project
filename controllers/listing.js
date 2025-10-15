@@ -53,22 +53,33 @@ module.exports.createListing = async (req, res, next) => {
     const newListing = new Listing(req.body.listing);
     newListing.owner = req.user._id;
 
-    // Geocode location
+    // 🌍 Geocode location with proper headers
     const location = req.body.listing.location;
     const geoResponse = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`,
+      {
+        headers: {
+          "User-Agent": "wanderlust-app (your-email@example.com)" // replace with your email/project name
+        }
+      }
     );
-    const geoData = await geoResponse.json();
 
-    if (geoData.length > 0) {
-      const longitude = parseFloat(geoData[0].lon);
-      const latitude = parseFloat(geoData[0].lat);
-      newListing.geometry = { type: "Point", coordinates: [longitude, latitude] };
-    } else {
-      newListing.geometry = { type: "Point", coordinates: [72.8777, 19.0760] }; // default Mumbai
+    let geoData = [];
+    try {
+      geoData = await geoResponse.json();
+    } catch (e) {
+      console.log("Nominatim returned invalid JSON, using fallback:", e.message);
     }
 
-    // Upload image if provided
+    // Fallback to default coordinates if no data
+    const coordinates =
+      geoData && geoData.length > 0
+        ? [parseFloat(geoData[0].lon), parseFloat(geoData[0].lat)]
+        : [72.8777, 19.0760]; // Mumbai fallback
+
+    newListing.geometry = { type: "Point", coordinates };
+
+    // ☁️ Upload image if provided
     if (req.file) {
       const result = await streamUpload(req.file.buffer);
       newListing.image = { url: result.secure_url, filename: result.public_id };
@@ -111,7 +122,6 @@ module.exports.updateListing = async (req, res, next) => {
       return res.redirect("/listings");
     }
 
-    // Update fields
     const { title, description, price, location, country } = req.body.listing;
     listing.title = title;
     listing.description = description;
@@ -119,16 +129,31 @@ module.exports.updateListing = async (req, res, next) => {
     listing.location = location;
     listing.country = country;
 
-    // Update geolocation
+    // 🌍 Update geolocation with headers
     const geoResponse = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`,
+      {
+        headers: {
+          "User-Agent": "wanderlust-app (your-email@example.com)" // replace with your email/project name
+        }
+      }
     );
-    const geoData = await geoResponse.json();
-    if (geoData.length > 0) {
-      listing.geometry = { type: "Point", coordinates: [parseFloat(geoData[0].lon), parseFloat(geoData[0].lat)] };
+
+    let geoData = [];
+    try {
+      geoData = await geoResponse.json();
+    } catch (e) {
+      console.log("Nominatim returned invalid JSON, using fallback:", e.message);
     }
 
-    // Upload new image if provided
+    const coordinates =
+      geoData && geoData.length > 0
+        ? [parseFloat(geoData[0].lon), parseFloat(geoData[0].lat)]
+        : [72.8777, 19.0760]; // Mumbai fallback
+
+    listing.geometry = { type: "Point", coordinates };
+
+    // ☁️ Upload new image if provided
     if (req.file) {
       const result = await streamUpload(req.file.buffer);
       listing.image = { url: result.secure_url, filename: result.public_id };
