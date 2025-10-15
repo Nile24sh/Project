@@ -45,6 +45,12 @@ module.exports.showListing = async (req, res) => {
 // ✅ Create new listing
 module.exports.createListing = async (req, res, next) => {
   try {
+    module.exports.createListing = async (req, res, next) => {
+  console.log("🟢 Create route hit!");
+  console.log("Body:", req.body);
+  console.log("File:", req.file);
+};
+
     const newListing = new Listing(req.body.listing);
     newListing.owner = req.user._id;
 
