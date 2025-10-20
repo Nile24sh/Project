@@ -1,9 +1,9 @@
 const Listing = require("../models/listing.js");
 const streamifier = require("streamifier");
 const cloudinary = require("../cloudConfig");
-const fetch = require("node-fetch"); // Make sure installed
+const fetch = require("node-fetch"); // ensure installed with: npm install node-fetch
 
-// Helper function to upload to Cloudinary
+// Cloudinary upload helper
 const streamUpload = (fileBuffer) => {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -16,6 +16,48 @@ const streamUpload = (fileBuffer) => {
     streamifier.createReadStream(fileBuffer).pipe(stream);
   });
 };
+
+// ✅ Safe geocoding helper with fallback
+async function getCoordinates(location) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+      location
+    )}&format=json&limit=1`;
+
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "wanderlust-app (anoj@example.com)", // replace with your email
+        "Accept-Language": "en",
+      },
+    });
+
+    if (!response.ok) {
+      console.warn(`🌐 Nominatim error: ${response.status} ${response.statusText}`);
+      return [72.8777, 19.0760]; // Mumbai default
+    }
+
+    let data = [];
+    try {
+      data = await response.json();
+    } catch (err) {
+      console.warn("⚠️ Invalid JSON from Nominatim:", err.message);
+      return [72.8777, 19.0760];
+    }
+
+    if (Array.isArray(data) && data.length > 0) {
+      const { lon, lat } = data[0];
+      return [parseFloat(lon), parseFloat(lat)];
+    } else {
+      console.warn("📍 No location data found, using fallback");
+      return [72.8777, 19.0760];
+    }
+  } catch (err) {
+    console.error("❌ Geocoding failed:", err.message);
+    return [72.8777, 19.0760];
+  }
+}
+
+// ---------------------- CONTROLLERS ----------------------
 
 // Show all listings
 module.exports.index = async (req, res) => {
@@ -47,37 +89,15 @@ module.exports.showListing = async (req, res, next) => {
   }
 };
 
-// Create a new listing
+// Create new listing
 module.exports.createListing = async (req, res, next) => {
   try {
     const newListing = new Listing(req.body.listing);
     newListing.owner = req.user._id;
 
-    // 🌍 Geocode location with proper headers
-    const location = req.body.listing.location;
-    const geoResponse = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`,
-      {
-        headers: {
-          "User-Agent": "wanderlust-app (your-email@example.com)" // replace with your email/project name
-        }
-      }
-    );
-
-    let geoData = [];
-    try {
-      geoData = await geoResponse.json();
-    } catch (e) {
-      console.log("Nominatim returned invalid JSON, using fallback:", e.message);
-    }
-
-    // Fallback to default coordinates if no data
-    const coordinates =
-      geoData && geoData.length > 0
-        ? [parseFloat(geoData[0].lon), parseFloat(geoData[0].lat)]
-        : [72.8777, 19.0760]; // Mumbai fallback
-
-    newListing.geometry = { type: "Point", coordinates };
+    // 🌍 Geocode safely
+    const coords = await getCoordinates(req.body.listing.location);
+    newListing.geometry = { type: "Point", coordinates: coords };
 
     // ☁️ Upload image if provided
     if (req.file) {
@@ -89,6 +109,7 @@ module.exports.createListing = async (req, res, next) => {
     req.flash("success", "New listing created!");
     res.redirect("/listings");
   } catch (err) {
+    console.error("❌ Create listing error:", err.message);
     next(err);
   }
 };
@@ -104,7 +125,8 @@ module.exports.renderEditListing = async (req, res, next) => {
     }
 
     let originalImageUrl = listing.image?.url || "";
-    if (originalImageUrl) originalImageUrl = originalImageUrl.replace("/upload", "/upload/w_250");
+    if (originalImageUrl)
+      originalImageUrl = originalImageUrl.replace("/upload", "/upload/w_250");
 
     res.render("listings/edit.ejs", { listing, originalImageUrl });
   } catch (err) {
@@ -112,7 +134,7 @@ module.exports.renderEditListing = async (req, res, next) => {
   }
 };
 
-// Update a listing
+// Update listing
 module.exports.updateListing = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -122,36 +144,11 @@ module.exports.updateListing = async (req, res, next) => {
       return res.redirect("/listings");
     }
 
-    const { title, description, price, location, country } = req.body.listing;
-    listing.title = title;
-    listing.description = description;
-    listing.price = price;
-    listing.location = location;
-    listing.country = country;
+    Object.assign(listing, req.body.listing);
 
-    // 🌍 Update geolocation with headers
-    const geoResponse = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`,
-      {
-        headers: {
-          "User-Agent": "wanderlust-app (your-email@example.com)" // replace with your email/project name
-        }
-      }
-    );
-
-    let geoData = [];
-    try {
-      geoData = await geoResponse.json();
-    } catch (e) {
-      console.log("Nominatim returned invalid JSON, using fallback:", e.message);
-    }
-
-    const coordinates =
-      geoData && geoData.length > 0
-        ? [parseFloat(geoData[0].lon), parseFloat(geoData[0].lat)]
-        : [72.8777, 19.0760]; // Mumbai fallback
-
-    listing.geometry = { type: "Point", coordinates };
+    // 🌍 Update coordinates
+    const coords = await getCoordinates(req.body.listing.location);
+    listing.geometry = { type: "Point", coordinates: coords };
 
     // ☁️ Upload new image if provided
     if (req.file) {
@@ -163,11 +160,12 @@ module.exports.updateListing = async (req, res, next) => {
     req.flash("success", "Listing updated successfully!");
     res.redirect(`/listings/${id}`);
   } catch (err) {
+    console.error("❌ Update listing error:", err.message);
     next(err);
   }
 };
 
-// Delete a listing
+// Delete listing
 module.exports.destroyListing = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -183,7 +181,9 @@ module.exports.destroyListing = async (req, res, next) => {
 module.exports.searchListing = async (req, res, next) => {
   try {
     const { country } = req.query;
-    const allListings = await Listing.find({ country: { $regex: new RegExp(country, "i") } });
+    const allListings = await Listing.find({
+      country: { $regex: new RegExp(country, "i") },
+    });
     res.render("listings/index.ejs", { allListings });
   } catch (err) {
     req.flash("error", "Search failed!");
